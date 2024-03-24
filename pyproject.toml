@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "LUFFA"
+version = "0.0.1"
+dependencies = ['numpy', 'tqdm', 'matplotlib']
+authors = [{ name = "Luca Leoni", email = "luca.leoni.99@gmail.com" }]
+description = "Lion Utility Functions For vAsp is a simple set of script that  frequently use in my day to day work with Vasp"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[project.scripts]
+compute_msd = "luffa.scripts.compute_msd:main"
+validation = "luffa.scripts.validation:main"
