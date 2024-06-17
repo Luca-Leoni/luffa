@@ -1,13 +1,19 @@
-# MATH
-try:
-    from jax import numpy as np
-    from jax import Array
-    from jax.lax import fori_loop
-except ImportError:
-    import numpy as np
-    from numpy import ndarray as Array
+# ---- MATH
 
-    fori_loop = None
+# This was a trick to use jax on GPU in case was present,
+# but a numerical problem with fft makes numpy a better coiche for now
+# try:
+#     from jax import numpy as np
+#     from jax import Array
+#     from jax.lax import fori_loop
+# except ImportError:
+#     import numpy as np
+#     from numpy import ndarray as Array
+#
+#     fori_loop = None
+
+import numpy as np
+from numpy import ndarray as Array
 
 from numpy import loadtxt, ndarray
 
@@ -17,6 +23,9 @@ from matplotlib.axes import Axes
 
 # MISCELLANEUS
 from tqdm import tqdm
+from typing import Optional
+
+fori_loop = None
 
 
 class VaspMDAnalyzer:
@@ -30,71 +39,64 @@ class VaspMDAnalyzer:
 
     def __init__(
         self,
-        xdatcar_path: str = "./XDATCAR",
+        trajectory_path: str = "./XDATCAR",
         potim: float = 1,
         start_conf: int = 0,
-        nconf: int | None = None,
+        nconf: Optional[int] = None,
         jump_elimination: bool = True,
     ) -> None:
         # Save potim
         self.__potim = potim
 
-        # Retrive informations on the atomic species
-        self.__get_atoms_xdatcar(xdatcar_path)
-        n_atoms = sum(self.__atoms.values())
+        # Try to read it as an XDATCAR
+        try:
+            self.__read_xdatcar(trajectory_path, start_conf, nconf, jump_elimination)
+        except Exception:
+            # If not work use ASE
+            from ase.io import read
 
-        # Look if simulation left cells parameters unchanged
-        read_cells = self.__is_cell_printed(xdatcar_path)
+            # Read ASE trajectory file
+            traj = read(
+                trajectory_path,
+                index=f"{start_conf}:{'' if nconf is None else start_conf + nconf}",
+            )
 
-        # Collect atom positions and unit cell at every frame
-        cells, posis = [], []
+            if not isinstance(traj, list):
+                traj = [traj]
 
-        print("VaspMDAnalyzer: reading XDATCAR file...")
-        with open(xdatcar_path, "r") as data:
-            # if cell is fixed then cell is reported in first frame
-            if not read_cells:
-                cells.append(loadtxt(data, skiprows=2, max_rows=3))
-                for _ in range(start_conf * (1 + n_atoms) + 2):
-                    data.readline()
-            else:
-                for _ in range(start_conf * (8 + n_atoms)):
-                    data.readline()
+            # Get atoms
+            self.__atoms = dict()
 
-            # Read all other frames
-            if nconf is None:
-                while not data.readline() == "":
-                    if read_cells:
-                        cells.append(loadtxt(data, skiprows=1, max_rows=3))
-                        posis.append(loadtxt(data, skiprows=3, max_rows=n_atoms))
-                    else:
-                        posis.append(loadtxt(data, max_rows=n_atoms))
-            else:
-                for _ in tqdm(range(nconf)):
-                    if data.readline() == "":
-                        break
+            symbols = np.array([str(x) for x in traj[0].get_chemical_symbols()])
+            for element in np.unique(symbols):
+                self.__atoms[element] = sum(symbols == element)
 
-                    if read_cells:
-                        cells.append(loadtxt(data, skiprows=1, max_rows=3))
-                        posis.append(loadtxt(data, skiprows=3, max_rows=n_atoms))
-                    else:
-                        posis.append(loadtxt(data, max_rows=n_atoms))
+            # Collect atom positions and unit cell at every frame
+            cells, posis = [], []
 
-        self.__cells, self.__atoms_posis = np.array(cells), np.array(posis)
+            print("VaspMDAnalyzer: reading Trajctory file...")
+            for atoms in tqdm(traj):
+                cells.append(atoms.cell.array)
+                posis.append(atoms.get_scaled_positions(False))
 
-        if not read_cells:
-            self.__cells = np.repeat(self.__cells, self.__atoms_posis.shape[0], axis=0)
+            self.__cells, self.__atoms_posis = np.array(cells), np.array(posis)
 
-        # --Data postprocessing
-        self.__cart_transform(jump_elimination)
-        self.__remove_drift()  # remove the drift of the cell
+            print(self.__atoms_posis)
 
-        print("VaspMDAnalyzer: XDATCAR read succesfully!")
+            # --Data postprocessing
+            self.__cart_transform(jump_elimination, True)
+            self.__remove_drift()  # remove the drift of the cell
+
+            print("VaspMDAnalyzer: Trajectory read succesfully!")
 
     def get_total_frame(self) -> int:
         return self.__atoms_posis.shape[0]
 
     def get_atomic_species(self) -> list[str]:
         return list(self.__atoms.keys())
+
+    def get_atomic_symbols(self) -> list[str]:
+        return self.get_atoms_from_frame(0).get_chemical_symbols()
 
     def get_atomic_position(self, element: str | None = None) -> Array:
         if element is None:
@@ -319,15 +321,98 @@ class VaspMDAnalyzer:
                 )
                 file.write(pos_line + "\n")
 
-    def __cart_transform(self, jump_elimination: bool) -> None:
+    def __read_xdatcar(
+        self,
+        trajectory_path: str,
+        start_conf: int,
+        nconf: Optional[int],
+        jump_elimination: bool,
+    ):
+        # Retrive informations on the atomic species
+        self.__get_atoms_xdatcar(trajectory_path)
+        n_atoms = sum(self.__atoms.values())
+
+        # Look if simulation left cells parameters unchanged
+        read_cells = self.__is_cell_printed(trajectory_path)
+
+        # Look if XDATCAR resports coordinate as direct
+        direct_cor = self.__is_coordinate_direct(trajectory_path)
+
+        # Collect atom positions and unit cell at every frame
+        cells, posis = [], []
+
+        debug: int = 0
+        print("VaspMDAnalyzer: reading XDATCAR file...")
+        with open(trajectory_path, "r") as data:
+            try:
+                # if cell is fixed then cell is reported in first frame
+                if not read_cells:
+                    cells.append(loadtxt(data, skiprows=2, max_rows=3))
+                    for _ in range(start_conf * (1 + n_atoms) + 2):
+                        data.readline()
+                else:
+                    for _ in range(start_conf * (8 + n_atoms)):
+                        data.readline()
+
+                # Read all other frames
+                if nconf is None:
+                    while not data.readline() == "":
+                        if read_cells:
+                            cells.append(loadtxt(data, skiprows=1, max_rows=3))
+                            posis.append(loadtxt(data, skiprows=3, max_rows=n_atoms))
+                        else:
+                            posis.append(loadtxt(data, max_rows=n_atoms))
+
+                        debug += 1
+                else:
+                    for _ in tqdm(range(nconf)):
+                        if data.readline() == "":
+                            break
+
+                        if read_cells:
+                            cells.append(loadtxt(data, skiprows=1, max_rows=3))
+                            posis.append(loadtxt(data, skiprows=3, max_rows=n_atoms))
+                        else:
+                            posis.append(loadtxt(data, max_rows=n_atoms))
+
+            except Exception as err:
+                print(f"Error in conf {debug}:", err)
+                exit(1)
+
+        self.__cells, self.__atoms_posis = np.array(cells), np.array(posis)
+
+        if not read_cells:
+            self.__cells = np.repeat(self.__cells, self.__atoms_posis.shape[0], axis=0)
+
+        # --Data postprocessing
+        self.__cart_transform(jump_elimination, direct_cor)
+        self.__remove_drift()  # remove the drift of the cell
+
+        print("VaspMDAnalyzer: XDATCAR read succesfully!")
+
+    def __cart_transform(self, jump_elimination: bool, direct_cor: bool) -> None:
         # --If no jump elimination is required then just transform
         if not jump_elimination:
-            self.__atoms_posis = np.einsum(
-                "ijk,ikl->ijl", self.__atoms_posis, self.__cells
-            )
+            if direct_cor:
+                self.__atoms_posis = np.einsum(
+                    "ijk,ikl->ijl", self.__atoms_posis, self.__cells
+                )
             return
 
         # --Search for jumps in direct coordinates
+        # If coordinates are not Direct we should transform them
+        if not direct_cor:
+            self.__atoms_posis = np.einsum(
+                "ijk,ilk->ijl",
+                self.__atoms_posis
+                / np.linalg.norm(self.__cells, axis=-2).reshape(
+                    (self.__cells.shape[0], 1, 3)
+                ),
+                self.__cells,
+            ) / np.linalg.norm(self.__cells, axis=-2).reshape(
+                (self.__cells.shape[0], 1, 3)
+            )
+
         # Compute difference in position between frames
         variation = np.diff(self.__atoms_posis, axis=0)
 
@@ -410,4 +495,11 @@ class VaspMDAnalyzer:
             for _ in range(n_atoms + 8):
                 file.readline()
 
-            return file.readline().strip().split()[0] != "Direct"
+            return "configuration" not in file.readline()
+
+    def __is_coordinate_direct(self, xdatcar_path: str) -> bool:
+        with open(xdatcar_path, "r") as file:
+            for _ in range(7):
+                file.readline()
+
+            return "Direct" in file.readline()

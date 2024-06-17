@@ -33,6 +33,14 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    "-n",
+    "--num_conf",
+    type=int,
+    default=1_000_000,
+    help="Total number of configuration to read from the XDATCAR",
+)
+
+parser.add_argument(
     "-p",
     "--potim",
     type=float,
@@ -40,12 +48,24 @@ parser.add_argument(
     help="Value of the POTIM variable used in the simulation",
 )
 
+parser.add_argument(
+    "-o",
+    "--output",
+    action="store_true",
+    help="Write the corrected XDATCAR",
+)
+
 args = parser.parse_args()
 
 
 # REAL APPLICATION
 def main():
-    anal = VaspMDAnalyzer(args.xdatcar_path, args.potim, start_conf=args.start_conf)
+    anal = VaspMDAnalyzer(
+        args.xdatcar_path,
+        args.potim,
+        start_conf=args.start_conf,
+        nconf=args.num_conf,
+    )
 
     elements = args.elements if args.elements is not None else anal.get_atomic_species()
 
@@ -56,3 +76,6 @@ def main():
         print(f"Finished in {time() - start:.3f}s")
 
         anal.plot_MSD(species, show=True)
+
+    if args.output:
+        anal.write("./XDATCAR_out")

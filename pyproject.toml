@@ -18,4 +18,6 @@ classifiers = [
 
 [project.scripts]
 compute_msd = "luffa.scripts.compute_msd:main"
+rewrite_mlab = "luffa.scripts.rewrite_ML_AB:main"
 validation = "luffa.scripts.validation:main"
+ase_md = "luffa.scripts.ase_md:main"

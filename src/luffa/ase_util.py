@@ -49,7 +49,7 @@ def __write_xdatcar_config(fd, atoms: Atoms, symbol_count, index):
     float_string = "{:11.6f}"
     for row_i in range(3):
         fd.write("  ")
-        fd.write(" ".join(float_string.format(x) for x in atoms.cell[row_i]))
+        fd.write(" ".join(float_string.format(x) for x in atoms.cell.array[row_i]))
         fd.write("\n")
 
     __write_symbol_count(fd, symbol_count)
