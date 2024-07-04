@@ -8,122 +8,225 @@ import numpy as np
 # Typing
 from typing import Dict
 from numpy import ndarray
+from io import TextIOWrapper
 
 # ---- FUNCTION
 
 
-def parse_outcar(path: str, verbose: bool = False, l: int = 1) -> Dict[str, ndarray]:
+def read_density_matrix(file: TextIOWrapper, lnumber: list[int]) -> tuple[list, list]:
+    occup_up, occup_dw = [], []
+    for ln in lnumber:
+        go_to_match(file, "onsite density matrix")
+
+        text = [file.readline() for _ in range(4 + 2 * ln)]
+
+        occup_up.append(np.loadtxt(text[3:]))
+
+        text = [file.readline() for _ in range(4 + 2 * ln)]
+
+        occup_dw.append(np.loadtxt(text[3:]))
+
+    return occup_up, occup_dw
+
+
+def go_to_match(file: TextIOWrapper, match: str, until: str = "") -> str:
+    """
+    Iterate through the File until a certain word is meatch in the line
+    """
+    line = file.readline()
+
+    while line != "":
+        if match in line:
+            return line
+
+        if (until in line) and (until != ""):
+            break
+
+        line = file.readline()
+    return ""
+
+
+def go_to_last_iteration(file: TextIOWrapper) -> str:
+    # Search for the first iteration
+    line = go_to_match(file, "Iteration")
+
+    # See if already at the end of file
+    if line == "":
+        return line
+
+    # Take the number of the sc loop
+    numsc = int(line.split("(")[0].split()[-1])
+
+    while line != "":
+        # Save current position
+        pos = file.tell() - len(line)
+
+        # Reach next iteration
+        line = go_to_match(file, "Iteration")
+        # print(line)
+
+        if line == "":
+            # End of file reached
+
+            file.seek(pos)
+            break
+
+        if numsc != int(line.split("(")[0].split()[-1]):
+            # New sc loop started, return back and exit
+
+            file.seek(pos)
+            break
+
+    return file.readline()
+
+
+def is_unfinished(file: TextIOWrapper) -> bool:
+    # save position
+    pos = file.tell()
+
+    if go_to_match(file, "LOOP+") != "":
+        file.seek(pos)
+
+        return False
+
+    if go_to_match(file, "writing wavefunction") != "":
+        file.seek(pos)
+
+        return False
+
+    return True
+
+
+def parse_outcar(path: str, verbose: bool = False) -> Dict[str, ndarray]:
+    """
+    Parses the OUTCAR in order to obtain all dynamical informations about the run,
+    is written in order to get all the steps if it's an MD run or only the last one if it's simple sc computation
+    """
     data: Dict[str, list] = {}
 
     with open(path, "r") as f:
-        # Read the first line
-        line = f.readline()
-
-        # ---- STRUCT
+        # ---- ATOMIC SPECIES
 
         # Find atomic informations
-        while "POSCAR" not in line:
-            line = f.readline()
+        line, data["elements"] = go_to_match(f, "POTCAR"), []
+        while "POTCAR" in line:
+            data["elements"].append(line.split()[2].split("_")[0])
 
-        data["elements"] = line.split("POSCAR:")[-1].split()
+            line = f.readline()
 
         # Search for the number atoms per type
-        while "ions per type" not in line:
-            line = f.readline()
+        line = go_to_match(f, "ions per type")
+        nTypes = line.split("ions per type =")[-1].split()
 
         data["elements"] = [
-            e
-            for e, n in zip(data["elements"], line.split("ions per type =")[-1].split())
-            for _ in range(int(n))
+            e for e, n in zip(data["elements"], nTypes) for _ in range(int(n))
         ]
 
         # Save total number of atoms
         nAtoms = len(data["elements"])
 
-        # Get the unit cell
-        while "direct lattice vectors" not in f.readline():
-            continue
-        data["cell"] = np.loadtxt(f, max_rows=3)[:, :3].tolist()
+        # ---- DENSITY MATRIX INFORMATIONS
+        line = go_to_match(f, "LDAUL", "Ionic step")
 
-        # ---- REAL PARSING
+        lnumber = []
+        if line != "":
+            lnumber = [int(x) for x in line.split("LDAUL =")[-1].split()]
+            lnumber = [x for x, n in zip(lnumber, nTypes) for _ in range(int(n))]
 
-        # Set verbosity
-        iter = f
-        if verbose:
-            from tqdm import tqdm
-
-            iter = tqdm(f)
+        # ---- SETUP FOR PARSING
 
         # Helper variables
-        occup_up, occup_dw = [], []
         data["positions"], data["forces"], data["energies"] = [], [], []
         data["occup_up"], data["occup_dw"] = [], []
-        data["magmom"] = []
+        data["magmom"], data["charge"] = [], []
 
         # MD helper variables
         data["tenergies"], data["temperature"] = [], []
         data["cells"], data["volume"] = [], []
 
+        # ---- REAL PARSING
+
         # Run through the OUTCAR
-        for line in iter:
-            # Take occupation matrix, if present
-            if "onsite density matrix" in line:
-                # If toccup alread maxed out restart
-                if len(occup_up) == nAtoms:
-                    occup_up, occup_dw = [], []
+        while True:
+            # search for last iteration
+            line = go_to_last_iteration(f)
 
-                # Real read
-                occup_up.append(np.loadtxt(f, skiprows=3, max_rows=2 * l + 1))
-                occup_dw.append(np.loadtxt(f, skiprows=3, max_rows=2 * l + 1))
+            # Reached end
+            if line == "":
+                break
 
-            # Take the possible unit cell and volume
-            if "volume of cell" in line:
-                data["volume"].append(float(line.split(":")[-1]))
+            # Check if this iteration is finished
+            if is_unfinished(f):
+                break
 
-                data["cells"].append(
-                    np.loadtxt(f, skiprows=1, usecols=(0, 1, 2), max_rows=3)
+            # Print progres if all good
+            if verbose:
+                print(
+                    f"Reading ionic step: {line.split("(")[0].split()[-1]:>6s}",
+                    end="\r",
                 )
 
-            # Take positions and forces
-            if "POSITION" in line:
-                entries = np.loadtxt(f, skiprows=1, max_rows=nAtoms)
+            # Reading density matrix first
+            occup_up, occup_dw = read_density_matrix(f, lnumber)
+            data["occup_up"].append(occup_up)
+            data["occup_dw"].append(occup_dw)
 
-                data["positions"].append(entries[:, :3])
-                data["forces"].append(entries[:, 3:])
+            # Reading total charge in the system
+            line = go_to_match(f, "total charge\n")
+            text = [f.readline() for _ in range(3 + nAtoms)]
+            data["charge"].append(np.loadtxt(text[3:], usecols=(1, 2, 3, 4)))
 
-                # Final potential energy is written under the positions
-                while "TOTEN" not in line:
-                    line = f.readline()
+            # Reading magmoms
+            line = go_to_match(f, "magnetization (x)")
+            text = [f.readline() for _ in range(3 + nAtoms)]
+            data["magmom"].append(np.loadtxt(text[3:], usecols=(1, 2, 3, 4)))
 
-                data["energies"].append(float(line.split("=")[-1].split()[0]))
+            # If we want here that can be stress
 
-                # Add toccup to final arrays since we reached the bottom
-                data["occup_up"].append(occup_up)
-                data["occup_dw"].append(occup_dw)
+            # Reading unit cell and volume
+            line = go_to_match(f, "volume of cell")
 
-            # Save possible thermostat energy
-            if "ETOTAL" in line:
+            data["volume"].append(float(line.split(":")[-1]))
+
+            text = [f.readline() for _ in range(4)]
+            data["cells"].append(np.loadtxt(text[1:], usecols=(0, 1, 2)))
+
+            # Reading positions and forces
+            go_to_match(f, "POSITION")
+
+            text = [f.readline() for _ in range(1 + nAtoms)]
+            entries = np.loadtxt(text[1:])
+
+            data["positions"].append(entries[:, :3])
+            data["forces"].append(entries[:, 3:])
+
+            # Reading FREE energy
+            line = go_to_match(f, "TOTEN")
+            data["energies"].append(float(line.split("=")[-1].split()[0]))
+
+            # Reading temperature
+            line = go_to_match(f, "temperature", "Ionic step")
+            if line != "":
+                data["temperature"].append(
+                    float(line.split("temperature")[-1].split()[0])
+                )
+
+            # Reading TOTAL energy
+            line = go_to_match(f, "ETOTAL", "Ionic step")
+            if line != "":
                 data["tenergies"].append(float(line.split("=")[-1].split()[0]))
 
-                # After that ther's the temperature
-                while "mean temperature" not in line:
-                    line = f.readline()
-
-                data["temperature"].append(float(line.split(":")[-1].split()[0]))
-
-            # Take magnetization
-            if "magnetization (x)" in line:
-                data["magmom"].append(
-                    np.loadtxt(f, skiprows=3, usecols=(1, 2, 3, 4), max_rows=nAtoms)
-                )
-
-    # Drop last MAGMOM and OCCUP since double counts
-    if len(data["magmom"]) > 0:
-        data["magmom"].pop()
-
-    # Drop second unit cell since is a repetition
-    if len(data["cells"]) > 1:
-        data["cells"].pop(1)
+    if verbose:
+        print(f"Reading ionic step: {len(data["cells"]):>6d}")
 
     # ---- Transform and output
     return {key: np.array(item) for key, item in data.items()}
+
+
+if __name__ == "__main__":
+    data = parse_outcar(
+        "/home/utente/MOUNT/DATA/HYB/MgO/DFT+U/PRODUCTION/2RUN/OUTCAR", True
+    )
+
+    for key, item in data.items():
+        print(f"{key}: {len(item)}")

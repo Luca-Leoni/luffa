@@ -20,4 +20,6 @@ classifiers = [
 compute_msd = "luffa.scripts.compute_msd:main"
 rewrite_mlab = "luffa.scripts.rewrite_ML_AB:main"
 validation = "luffa.scripts.validation:main"
+outcar_to_xyz = "luffa.scripts.outcar_to_xyz:main"
+show_xyz = "luffa.scripts.show_xyz:main"
 ase_md = "luffa.scripts.ase_md:main"
