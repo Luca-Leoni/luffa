@@ -10,23 +10,8 @@ from typing import Dict
 from numpy import ndarray
 from io import TextIOWrapper
 
+
 # ---- FUNCTION
-
-
-def read_density_matrix(file: TextIOWrapper, lnumber: list[int]) -> tuple[list, list]:
-    occup_up, occup_dw = [], []
-    for ln in lnumber:
-        go_to_match(file, "onsite density matrix")
-
-        text = [file.readline() for _ in range(4 + 2 * ln)]
-
-        occup_up.append(np.loadtxt(text[3:]))
-
-        text = [file.readline() for _ in range(4 + 2 * ln)]
-
-        occup_dw.append(np.loadtxt(text[3:]))
-
-    return occup_up, occup_dw
 
 
 def go_to_match(file: TextIOWrapper, match: str, until: str = "") -> str:
@@ -44,6 +29,22 @@ def go_to_match(file: TextIOWrapper, match: str, until: str = "") -> str:
 
         line = file.readline()
     return ""
+
+
+def read_density_matrix(file: TextIOWrapper, lnumber: list[int]) -> tuple[list, list]:
+    occup_up, occup_dw = [], []
+    for ln in lnumber:
+        go_to_match(file, "onsite density matrix")
+
+        text = [file.readline() for _ in range(4 + 2 * ln)]
+
+        occup_up.append(np.loadtxt(text[3:]))
+
+        text = [file.readline() for _ in range(4 + 2 * ln)]
+
+        occup_dw.append(np.loadtxt(text[3:]))
+
+    return occup_up, occup_dw
 
 
 def go_to_last_iteration(file: TextIOWrapper) -> str:
