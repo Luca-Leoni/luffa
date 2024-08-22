@@ -14,6 +14,12 @@ import threading
 # ---- HELPER FUNCTION
 
 
+def unit_vector(theta: float, phi: float) -> np.ndarray:
+    return np.array(
+        [np.cos(phi) * np.sin(theta), np.sin(phi) * np.sin(theta), np.cos(theta)]
+    )
+
+
 def fft_msd(atomic_positions: np.ndarray) -> np.ndarray:
     N = atomic_positions.shape[0]  # Number of frames
 
@@ -33,6 +39,13 @@ def arg_parse() -> Namespace:
     parser = ArgumentParser()
 
     parser.add_argument("file", type=str, help="Trajectory file to read")
+
+    parser.add_argument(
+        "-p",
+        "--project",
+        action="store_true",
+        help="Project the polaron trajectory an the different direction of a plane and compute MSD for every projection",
+    )
 
     parser.add_argument(
         "-b",
@@ -62,7 +75,7 @@ def arg_parse() -> Namespace:
     return parser.parse_args()
 
 
-def compute_msd(msd, file, i, delta):
+def compute_msd(msd, file, i, delta, project: bool = False):
     print(f"Reading data between frames: {i * delta:<7d} ===> {(i + 1) * delta:<7d}")
 
     file = tb.open_file(file)
@@ -96,6 +109,17 @@ def compute_msd(msd, file, i, delta):
 
     print(f"Compute MSD between frames: {i * delta:<7d} ===> {(i + 1) * delta:<7d}")
 
+    # Project positions
+    if project:
+        n_proj = np.linspace(0, 2 * np.pi, msd.shape[-1])
+
+        projection = np.zeros((position.shape[0], len(n_proj)))
+
+        for j, theta in enumerate(n_proj):
+            projection[:, j] = np.dot(position, unit_vector(theta, np.pi * 0.5))
+
+        position = projection
+
     # Compute the transform
     msd[i] = fft_msd(position[:, np.newaxis, :])
 
@@ -117,12 +141,15 @@ def main():
     # Compute chunks values
     n_steps_per_chunk = (args.end - args.beg) // np.abs(args.chunks)
 
-    msd = np.zeros((np.abs(args.chunks), n_steps_per_chunk, 3))
+    if args.project:
+        msd = np.zeros((np.abs(args.chunks), n_steps_per_chunk, 100))
+    else:
+        msd = np.zeros((np.abs(args.chunks), n_steps_per_chunk, 3))
 
     # Serial version
     if args.chunks < 0:
         for i in range(np.abs(args.chunks)):
-            compute_msd(msd, args.file, i, n_steps_per_chunk)
+            compute_msd(msd, args.file, i, n_steps_per_chunk, args.project)
         np.save(args.output, msd.mean(0))
 
     # Parallel version
@@ -131,7 +158,8 @@ def main():
 
         for i in range(args.chunks):
             t = threading.Thread(
-                target=compute_msd, args=(msd, args.file, i, n_steps_per_chunk)
+                target=compute_msd,
+                args=(msd, args.file, i, n_steps_per_chunk, args.project),
             )
             t.start()
 
