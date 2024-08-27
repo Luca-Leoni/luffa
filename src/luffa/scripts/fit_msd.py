@@ -49,7 +49,7 @@ def arg_parse() -> Namespace:
     parser.add_argument(
         "-o",
         "--output",
-        default="MSD_FIT.pdf",
+        default="MSD_FIT",
         help="Name of the picture output, if wanted",
     )
 
@@ -68,43 +68,72 @@ def main():
     data = msd[args.beg : args.end]
     time = np.arange(len(data))
 
-    # Compute the different coefficients
-    Ds, Vs = np.zeros(4), np.zeros(4)
+    # Case where the MSD is computed for the cartesian coordinates
+    if data.shape[1] == 3:
+        # Compute the different coefficients
+        Ds, Vs = np.zeros(4), np.zeros(4)
 
-    Ds[:-1], Vs[:-1] = np.polyfit(time, data, 1)
-    Ds[-1], Vs[-1] = np.polyfit(time, data.sum(-1), 1)
+        Ds[:-1], Vs[:-1] = np.polyfit(time, data, 1)
+        Ds[-1], Vs[-1] = np.polyfit(time, data.sum(-1), 1)
 
-    # Print the results
-    print(
-        "D[A²/fs] %12.5E %10.5E %10.5E %10.5E"
-        % (Ds[0] * 0.5, Ds[1] * 0.5, Ds[2] * 0.5, Ds[3] / 6)
-    )
-
-    if args.temperature > 0:
-        mu = 10 * Ds / kB / args.temperature
-
+        # Print the results
         print(
-            "μ[Vcm²/s] %10.5E %10.5E %10.5E %10.5E"
-            % (mu[0] * 0.5, mu[1] * 0.5, mu[2] * 0.5, mu[3] / 6)
+            "D[A²/fs] %12.5E %10.5E %10.5E %10.5E"
+            % (Ds[0] * 0.5, Ds[1] * 0.5, Ds[2] * 0.5, Ds[3] / 6)
         )
 
-    # Draw the final picture if wanted
-    if args.save:
-        colors = colormaps["magma"].reversed()(np.linspace(0, 1, 4))
-        for i, label in enumerate(["X", "Y", "Z"]):
-            plt.plot(msd[:, i], "--", label=label, color=colors[i])
-        plt.plot(msd.sum(-1), label="Total", color=colors[-1], linewidth=3)
+        if args.temperature > 0:
+            mu = 10 * Ds / kB / args.temperature
 
-        for color, a, b in zip(colors, Ds, Vs):
-            plt.plot(time, b + time * a, "-", color=color)
+            print(
+                "μ[Vcm²/s] %10.5E %10.5E %10.5E %10.5E"
+                % (mu[0] * 0.5, mu[1] * 0.5, mu[2] * 0.5, mu[3] / 6)
+            )
 
-        plt.xlim(0, time[-1] * 1.1)
-        plt.ylim(0, msd.sum(-1)[time[-1]] * 1.1)
+        # Draw the final picture if wanted
+        if args.save:
+            colors = colormaps["magma"].reversed()(np.linspace(0, 1, 4))
+            for i, label in enumerate(["X", "Y", "Z"]):
+                plt.plot(msd[:, i], "--", label=label, color=colors[i])
+            plt.plot(msd.sum(-1), label="Total", color=colors[-1], linewidth=3)
 
-        plt.legend()
+            for color, a, b in zip(colors, Ds, Vs):
+                plt.plot(time, b + time * a, "-", color=color)
 
-        plt.tight_layout()
-        plt.savefig(args.output)
+            plt.xlim(0, time[-1] * 1.1)
+            plt.ylim(0, msd.sum(-1)[time[-1]] * 1.1)
+
+            plt.legend()
+
+            plt.tight_layout()
+            plt.savefig(args.output + ".pdf")
+
+    # Case where the MSD is computed for the projection
+    else:
+        # Compute the different coefficients
+        Ds, _ = np.polyfit(time, data, 1)
+
+        # Save the results to file
+        if args.temperature > 0:
+            mu = 10 * Ds / kB / args.temperature
+
+            np.save(args.output + ".npy", np.vstack((mu, Ds)).T)
+        else:
+            np.save(args.output + ".npy", Ds)
+
+        # Draw the final picture if wanted
+        if args.save:
+            fig, ax = plt.subplots(subplot_kw={"projection": "polar"})
+
+            for i in range(5):
+                ax.plot(Ds[i, :, 0], Ds[i, :, 1], label=f"{(i+1) * 100}K")
+
+            plt.yscale("log")
+
+            plt.ylabel(r"$\mu$")
+
+            plt.legend()
+            plt.savefig(args.output + ".pdf")
 
 
 if __name__ == "__main__":
