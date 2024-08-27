@@ -113,20 +113,23 @@ def main():
         # Compute the different coefficients
         Ds, _ = np.polyfit(time, data, 1)
 
+        # Create the angle dependency
+        theta = np.linspace(0, 2 * np.pi, len(Ds))
+
         # Save the results to file
         if args.temperature > 0:
             mu = 10 * Ds / kB / args.temperature
 
-            np.save(args.output + ".npy", np.vstack((mu, Ds)).T)
+            np.save(args.output + ".npy", np.vstack((theta, 0.5 * mu, 0.5 * Ds)).T)
         else:
-            np.save(args.output + ".npy", Ds)
+            np.save(args.output + ".npy", np.vstack((theta, 0.5 * Ds)).T)
 
         # Draw the final picture if wanted
         if args.save:
             fig, ax = plt.subplots(subplot_kw={"projection": "polar"})
 
             for i in range(5):
-                ax.plot(Ds[i, :, 0], Ds[i, :, 1], label=f"{(i+1) * 100}K")
+                ax.plot(Ds[i, :, 0] * 0.5, Ds[i, :, 1] * 0.5, label=f"{(i+1) * 100}K")
 
             plt.yscale("log")
 
