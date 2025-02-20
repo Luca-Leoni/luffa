@@ -25,6 +25,7 @@ def arg_parse() -> Namespace:
 
     # Options
     parser.add_argument("-o", "--output", default="outcar.xyz")
+    parser.add_argument("-a", "--append", action="store_true")
 
     return parser.parse_args()
 
@@ -40,9 +41,9 @@ def main():
     elements = data.pop("elements")
 
     # Pop all empty things
-    for key in data.keys():
-        if len(data[key]) == 0:
-            data.pop(key)
+    keys = filter(lambda x: len(data[x]) == 0, list(data.keys()).copy())
+    for key in keys:
+        data.pop(key)
 
     # Create Atoms trajectory
     traj: list[Atoms] = []
@@ -67,18 +68,27 @@ def main():
 
         atoms.arrays["forces"] = force
         atoms.arrays["charges"] = charge[:, -1]
-        atoms.arrays["magmoms"] = magmom
+        atoms.arrays["magmoms"] = magmom[:, -1]
         atoms.arrays["decomposed_charge"] = charge[:, :-1]
-        atoms.arrays["toccups"] = np.dstack(
-            (
-                np.trace(occup_dw, axis1=-1, axis2=-2),
-                np.trace(occup_up, axis1=-1, axis2=-2),
-            )
-        )[0]
+        atoms.arrays["decomposed_magmom"] = magmom[:, :-1]
+
+        # See if present
+        if len(occup_up) == 0:
+            occup_up = 0.5 * (charge[:, :-1] - magmom[:, :-1])
+            occup_dw = 0.5 * (charge[:, :-1] + magmom[:, :-1])
+
+            atoms.arrays["toccups"] = np.append(occup_up, occup_dw, axis=1)
+        else:
+            atoms.arrays["toccups"] = np.dstack(
+                (
+                    np.trace(occup_dw, axis1=-1, axis2=-2),
+                    np.trace(occup_up, axis1=-1, axis2=-2),
+                )
+            )[0]
 
         traj.append(atoms)
 
-    write(args.output, traj, format="extxyz")
+    write(args.output, traj, format="extxyz", append=args.append)
 
 
 if __name__ == "__main__":

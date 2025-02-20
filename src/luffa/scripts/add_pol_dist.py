@@ -52,20 +52,20 @@ def main() -> None:
     args = args_parse()
 
     # Read POSCAR
-    poscar = Poscar.from_file(args.path).structure
+    poscar = Poscar.from_file(args.path)
 
     # Modify structure
     for i in args.idxs:
         transf = RadialSiteDistortionTransformation(i, args.pol_radius, True)
 
-        poscar = transf.apply_transformation(poscar)
+        poscar.structure = transf.apply_transformation(poscar.structure)
 
     # Output
     output = "./POSCAR_POL"
     if args.output != "POSCAR_POL":
         output = args.output
 
-    Poscar(poscar).write_file(output)
+    poscar.write_file(output)
 
 
 # ---- MAIN

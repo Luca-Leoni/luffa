@@ -127,12 +127,17 @@ def parse_outcar(path: str, verbose: bool = False) -> Dict[str, ndarray]:
         nAtoms = len(data["elements"])
 
         # ---- DENSITY MATRIX INFORMATIONS
-        line = go_to_match(f, "LDAUL", "Ionic step")
+        pos = f.tell()
+        line = go_to_match(f, "onsite density matrix")
+        f.seek(pos)
 
         lnumber = []
         if line != "":
-            lnumber = [int(x) for x in line.split("LDAUL =")[-1].split()]
-            lnumber = [x for x, n in zip(lnumber, nTypes) for _ in range(int(n))]
+            line = go_to_match(f, "LDAUL", "Ionic step")
+
+            if line != "":
+                lnumber = [int(x) for x in line.split("LDAUL =")[-1].split()]
+                lnumber = [x for x, n in zip(lnumber, nTypes) for _ in range(int(n))]
 
         # ---- SETUP FOR PARSING
 
@@ -148,9 +153,11 @@ def parse_outcar(path: str, verbose: bool = False) -> Dict[str, ndarray]:
         # ---- REAL PARSING
 
         # Run through the OUTCAR
+        line = "start"
         while True:
             # search for last iteration
-            line = go_to_last_iteration(f)
+            if len(lnumber) != 0:
+                line = go_to_last_iteration(f)
 
             # Reached end
             if line == "":
@@ -163,7 +170,7 @@ def parse_outcar(path: str, verbose: bool = False) -> Dict[str, ndarray]:
             # Print progres if all good
             if verbose:
                 print(
-                    f"Reading ionic step: {line.split("(")[0].split()[-1]:>6s}",
+                    f"Reading ionic step: {len(data["cells"]):>6d}",
                     end="\r",
                 )
 
@@ -173,7 +180,7 @@ def parse_outcar(path: str, verbose: bool = False) -> Dict[str, ndarray]:
             data["occup_dw"].append(occup_dw)
 
             # Reading total charge in the system
-            line = go_to_match(f, "total charge\n")
+            line = go_to_match(f, "total charge")
             text = [f.readline() for _ in range(3 + nAtoms)]
             data["charge"].append(np.loadtxt(text[3:], usecols=(1, 2, 3, 4)))
 
@@ -186,6 +193,8 @@ def parse_outcar(path: str, verbose: bool = False) -> Dict[str, ndarray]:
 
             # Reading unit cell and volume
             line = go_to_match(f, "volume of cell")
+            if line == "":  # possible early end when reading old VASP
+                break
 
             data["volume"].append(float(line.split(":")[-1]))
 
